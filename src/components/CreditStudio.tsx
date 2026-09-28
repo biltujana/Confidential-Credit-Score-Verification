@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import {
   LockKeyhole,
   RotateCcw,
@@ -6,14 +6,13 @@ import {
   Fingerprint,
   Sparkles,
   Check,
-  ArrowRight
+  ArrowRight,
+  Wallet
 } from 'lucide-react'
 import type { LocalCredential } from '../lib/privateState'
 import { rotateCredential, updateLocalCreditProfile } from '../lib/privateState'
-import type { Network } from '../lib/wallet'
-
+import type { Network, WalletState } from '../lib/wallet'
 import { LENDING_TIERS, type LendingTier } from '../lib/tiers'
-
 
 interface CreditStudioProps {
   credential: LocalCredential
@@ -21,8 +20,10 @@ interface CreditStudioProps {
   network: Network
   setNetwork: (n: Network) => void
   proofState: 'ready' | 'proving' | 'awaiting' | 'finalized' | 'failed'
+  walletState: WalletState
   statusMessage: string
   onDeployAndProve: () => void
+  onConnectWallet: () => void
 }
 
 export function CreditStudio({
@@ -31,8 +32,10 @@ export function CreditStudio({
   network,
   setNetwork,
   proofState,
+  walletState,
   statusMessage,
   onDeployAndProve,
+  onConnectWallet,
 }: CreditStudioProps) {
   const [selectedTier, setSelectedTier] = useState<LendingTier>(LENDING_TIERS[1])
   const [assistantOpen, setAssistantOpen] = useState(false)
@@ -43,7 +46,8 @@ export function CreditStudio({
     setCredential({ ...updated })
   }
 
-  const handleBureauChange = (bureau: 'Experian' | 'Equifax' | 'TransUnion') => {
+  const handleBureauChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const bureau = e.target.value as 'Experian' | 'Equifax' | 'TransUnion'
     const updated = updateLocalCreditProfile({ bureau })
     setCredential({ ...updated })
   }
@@ -152,7 +156,7 @@ export function CreditStudio({
               <div className="attr-value">
                 <select
                   value={credential.bureau}
-                  onChange={(e) => handleBureauChange(e.target.value as 'Experian' | 'Equifax' | 'TransUnion')}
+                  onChange={handleBureauChange}
                   style={{ border: 'none', background: 'transparent', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', outline: 'none' }}
                 >
                   <option value="Experian">Experian (Issuer #101)</option>
@@ -287,8 +291,9 @@ export function CreditStudio({
           </div>
 
           <span className={`proving-status-pill status-${proofState}`}>
-            {proofState === 'ready' && 'Ready to Prove'}
+            {proofState === 'ready' && (walletState === 'connected' ? 'Ready to Prove' : 'Wallet Not Connected')}
             {proofState === 'proving' && 'Synthesizing ZK Circuit...'}
+            {proofState === 'awaiting' && 'Awaiting 1AM Approval...'}
             {proofState === 'finalized' && 'On-Chain Finalized'}
             {proofState === 'failed' && 'Execution Interrupted'}
           </span>
@@ -299,22 +304,26 @@ export function CreditStudio({
             <p style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>{statusMessage}</p>
             <p>
               Deploying registers the lending policy hash on the public ledger. Proving evaluates your credit score
-              inside Midnight's client-side ZK circuit.
+              inside Midnight client-side ZK circuit with 1AM wallet confirmation.
             </p>
           </div>
 
           <button
             className="btn-3d-purple"
-            disabled={proofState === 'proving'}
-            onClick={onDeployAndProve}
+            disabled={proofState === 'proving' || proofState === 'awaiting'}
+            onClick={walletState !== 'connected' ? onConnectWallet : onDeployAndProve}
             style={{ padding: '14px 28px', fontSize: '1rem' }}
           >
-            {proofState === 'proving' ? (
-              <>Synthesizing Proof...</>
+            {walletState !== 'connected' ? (
+              <><Wallet size={18} /> Connect 1AM Wallet to Verify</>
+            ) : proofState === 'proving' ? (
+              <><span className="spinner-sm" /> Synthesizing ZK Circuit...</>
+            ) : proofState === 'awaiting' ? (
+              <><span className="pulse-dot" /> Confirm in 1AM Wallet...</>
             ) : proofState === 'finalized' ? (
               <><Check size={18} /> Finalized on Midnight</>
             ) : (
-              <>Generate Proof & Deploy <ArrowRight size={18} /></>
+              <>Verify & Prove with 1AM <ArrowRight size={18} /></>
             )}
           </button>
         </div>

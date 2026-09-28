@@ -1,11 +1,14 @@
 import { useState } from 'react'
-import { Layers, ArrowRight, Menu, X } from 'lucide-react'
+import { Layers, ArrowRight, Menu, X, Wallet } from 'lucide-react'
+import type { Network, WalletState } from '../lib/wallet'
 
 interface NavbarProps {
-  onVerifyClick: () => void
+  walletState: WalletState
+  network: Network
+  onConnectWallet: () => void
 }
 
-export function Navbar({ onVerifyClick }: NavbarProps) {
+export function Navbar({ walletState, network, onConnectWallet }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
@@ -27,9 +30,25 @@ export function Navbar({ onVerifyClick }: NavbarProps) {
         </nav>
 
         <div className="nav-actions">
-          <button className="btn-3d-purple" onClick={onVerifyClick}>
-            Verify Score <ArrowRight size={16} />
-          </button>
+          {walletState === 'connected' ? (
+            <div
+              className="wallet-connected-pill"
+              onClick={onConnectWallet}
+              title="Click to reconnect or check status"
+            >
+              <span className="status-dot-connected"></span>
+              <span>1AM Connected</span>
+              <span className="network-badge-sm">{network.toUpperCase()}</span>
+            </div>
+          ) : walletState === 'connecting' ? (
+            <button className="btn-3d-purple" disabled>
+              <span className="spinner-sm"></span> Connecting 1AM...
+            </button>
+          ) : (
+            <button className="btn-3d-purple" onClick={onConnectWallet}>
+              <Wallet size={16} /> Connect 1AM <ArrowRight size={16} />
+            </button>
+          )}
 
           <button
             className="mobile-menu-btn"

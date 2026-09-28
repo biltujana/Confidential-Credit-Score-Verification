@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Layers } from 'lucide-react'
 import { loadCredential, type LocalCredential } from './lib/privateState'
 import { loadPublicReceipt, PUBLIC_RECEIPT_EVENT, type PublicReceipt } from './lib/receipt'
-import { classifyWalletError, connectWallet, type Network, type WalletState } from './lib/wallet'
+import { classifyWalletError, connectWallet, type Network, type WalletSession, type WalletState } from './lib/wallet'
 import { deployEligibilityContract } from './lib/deployment'
 import { fetchPublicMetrics, type PublicMetrics } from './lib/api'
 import { Navbar } from './components/Navbar'
@@ -17,8 +17,9 @@ export default function App() {
   const [credential, setCredential] = useState<LocalCredential>(loadCredential)
   const [receipt, setReceipt] = useState<PublicReceipt | null>(loadPublicReceipt)
   const [proofState, setProofState] = useState<'ready' | 'proving' | 'awaiting' | 'finalized' | 'failed'>('ready')
-  const [, setWalletState] = useState<WalletState>('idle')
-  const [statusMessage, setStatusMessage] = useState<string>('Ready to prove credit eligibility.')
+  const [walletState, setWalletState] = useState<WalletState>('idle')
+  const [walletSession, setWalletSession] = useState<WalletSession | null>(null)
+  const [statusMessage, setStatusMessage] = useState<string>('Ready to verify credit eligibility with 1AM wallet.')
   const [, setMetrics] = useState<PublicMetrics | null>(null)
 
   useEffect(() => {
@@ -39,15 +40,37 @@ export default function App() {
     document.getElementById('verification')?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const handleConnectWallet = async () => {
+    setWalletState('connecting')
+    setStatusMessage('Connecting to 1AM Midnight wallet...')
+    try {
+      const { session, wallet } = await connectWallet(network)
+      setWalletSession(session)
+      setWalletState('connected')
+      setStatusMessage(`Connected to ${wallet.name} on ${network.toUpperCase()}. Ready to verify.`)
+    } catch (err: unknown) {
+      setWalletState('error')
+      setStatusMessage(classifyWalletError(err))
+    }
+  }
+
   const handleDeployAndProve = async () => {
     setProofState('proving')
     setStatusMessage('Generating zero-knowledge witness and Jubjub-Schnorr signature proof...')
 
     try {
-      const { session } = await connectWallet(network)
-      setWalletState('connected')
+      let session = walletSession
+      if (!session) {
+        setWalletState('connecting')
+        setStatusMessage('Connecting to 1AM wallet for verification...')
+        const connected = await connectWallet(network)
+        session = connected.session
+        setWalletSession(session)
+        setWalletState('connected')
+      }
 
-      setStatusMessage('Submitting zero-knowledge transaction to Midnight Network...')
+      setProofState('awaiting')
+      setStatusMessage('Please confirm and approve transaction in your 1AM wallet...')
 
       const deploymentResult = await deployEligibilityContract({
         wallet: session,
@@ -68,7 +91,11 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Navbar onVerifyClick={scrollToVerification} />
+      <Navbar
+        walletState={walletState}
+        network={network}
+        onConnectWallet={handleConnectWallet}
+      />
 
       <main className="main-content">
         <Hero3D />
@@ -79,8 +106,10 @@ export default function App() {
           network={network}
           setNetwork={setNetwork}
           proofState={proofState}
+          walletState={walletState}
           statusMessage={statusMessage}
           onDeployAndProve={handleDeployAndProve}
+          onConnectWallet={handleConnectWallet}
         />
 
         <ReceiptsExplorer
