@@ -1,0 +1,91 @@
+// Confidential Credit Score Verification selective-disclosure contract.
+// Private credit attributes, scores, and bureau signatures are supplied by local witnesses.
+// The public ledger contains only policy metadata, bureau public keys, proof counters,
+// and one-time spend nullifiers.
+pragma language_version >= 0.22 && <= 0.23;
+
+import CompactStandardLibrary;
+import "schnorr" prefix Schnorr_;
+
+export { Schnorr_SchnorrSignature };
+
+export struct CreditScoreCredential {
+  scoreAboveThreshold: Boolean;
+  noActiveDefault: Boolean;
+}
+
+export new type HolderSecret = Bytes<32>;
+export new type AdminKey = Bytes<32>;
+
+export ledger policyHash: Bytes<32>;
+export ledger adminKey: AdminKey;
+export ledger finalizedProofs: Counter;
+export ledger usedNullifiers: Set<Bytes<32>>;
+export ledger trustedIssuers: Map<Uint<16>, JubjubPoint>;
+
+witness getHolderSecret(): HolderSecret;
+witness getCreditScoreCredential(): [CreditScoreCredential, Schnorr_SchnorrSignature, Uint<16>];
+
+export pure circuit deriveAdminKey(secret: HolderSecret): AdminKey {
+  return persistentHash<[Bytes<33>, HolderSecret]>([
+    "creditscore:admin:key:v1",
+    secret
+  ]) as AdminKey;
+}
+
+constructor(initialPolicyHash: Bytes<32>) {
+  policyHash = disclose(initialPolicyHash);
+  adminKey = disclose(deriveAdminKey(getHolderSecret()));
+}
+
+export circuit registerIssuer(issuerId: Uint<16>, issuerPublicKey: JubjubPoint): [] {
+  assert(adminKey == deriveAdminKey(getHolderSecret()), "Only the contract administrator can register credit bureaus");
+  trustedIssuers.insert(disclose(issuerId), disclose(issuerPublicKey));
+}
+
+export circuit removeIssuer(issuerId: Uint<16>): [] {
+  assert(adminKey == deriveAdminKey(getHolderSecret()), "Only the contract administrator can remove credit bureaus");
+  assert(trustedIssuers.member(disclose(issuerId)), "Credit bureau is not registered");
+  trustedIssuers.remove(disclose(issuerId));
+}
+
+export circuit setPolicy(nextPolicyHash: Bytes<32>): [] {
+  assert(adminKey == deriveAdminKey(getHolderSecret()), "Only the contract administrator can change lending policy");
+  assert(nextPolicyHash != policyHash, "The lending policy hash is unchanged");
+  policyHash = disclose(nextPolicyHash);
+}
+
+// The credit bureau signs only the two eligibility predicates, a holder-scoped binding and the
+// lending policy binding. The raw credit score, bureau account IDs, and financial records never
+// leave the client's local zero-knowledge witness.
+export circuit proveEligibility(nonce: Bytes<32>): Boolean {
+  const [credential, signature, issuerId] = getCreditScoreCredential();
+  const disclosedIssuerId = disclose(issuerId);
+  assert(trustedIssuers.member(disclosedIssuerId), "Credit bureau issuer is not registered");
+
+  const holderSecret = getHolderSecret();
+  const holderBinding = transientHash<HolderSecret>(holderSecret);
+  const policyBinding = transientHash<Bytes<32>>(policyHash);
+  const message: Vector<4, Field> = [
+    credential.scoreAboveThreshold as Field,
+    credential.noActiveDefault as Field,
+    holderBinding,
+    policyBinding
+  ];
+
+  Schnorr_schnorrVerify<4>(message, signature, trustedIssuers.lookup(disclosedIssuerId));
+  assert(credential.scoreAboveThreshold, "The credit score threshold requirement is not satisfied");
+  assert(credential.noActiveDefault, "Account default or delinquency flag detected");
+
+  const nullifier = persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "creditscore:nullifier:v1"),
+    holderSecret as Bytes<32>,
+    nonce,
+    policyHash
+  ]);
+  const publicNullifier = disclose(nullifier);
+  assert(!usedNullifiers.member(publicNullifier), "This credit score credential has already been verified for this loan request");
+  usedNullifiers.insert(publicNullifier);
+  finalizedProofs.increment(1);
+  return disclose(true);
+}
